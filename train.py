@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
 import numpy as np
 import os
 import sys
@@ -455,4 +457,4 @@ with tf.Session() as sess:
             if (args.record_run_metadata > 0):
                 summary_writer.add_run_metadata(run_metadata, 'step %d' % step, global_step=step)
             if data.E is not None:
-                print(str(step)+'/'+str(args.max_steps), "loss:", results["loss_train"], "best:", best_loss, "emae:", results["energy_mae_train"], "best:", best_emae)
+                print(str(step)+'/'+str(args.max_steps), "loss:", results["loss_train"], "best:", best_loss, "emae:", results["energy_mae_train"], "best:", best_emae,flush=True)

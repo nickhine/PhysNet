@@ -1,9 +1,12 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
 import numpy as np
 import ase
-from ase.neighborlist import neighbor_list
-from .neural_network.NeuralNetwork import *
-from .neural_network.activation_fn import *
+#from ase.neighborlist import neighbor_list
+from matscipy.neighbours import neighbour_list as neighbor_list
+from neural_network.NeuralNetwork import *
+from neural_network.activation_fn import *
 
 '''
 Calculator for the atomic simulation environment (ASE)
@@ -81,7 +84,7 @@ class NNCalculator:
         else:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets)
         self._charges = self.nn.scaled_charges(self.Z, Qa, self.Q_tot)
-        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
+        self._energy, self._forces, self._stress = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
 
         #create TensorFlow session and load neural network(s)
         self._sess = tf.Session()
@@ -99,8 +102,14 @@ class NNCalculator:
         if self.use_neighborlist or any(atoms.get_pbc()):
             idx_i, idx_j, S = neighbor_list('ijS', atoms, self.lr_cutoff)
             offsets = np.dot(S, atoms.get_cell())
-            sr_idx_i, sr_idx_j, sr_S = neighbor_list('ijS', atoms, self.sr_cutoff)
-            sr_offsets = np.dot(sr_S, atoms.get_cell())
+            if self.lr_cutoff == self.sr_cutoff:
+                sr_idx_i = idx_i
+                sr_idx_j = idx_j
+                sr_S = S
+                sr_offsets = offsets
+            else:
+                sr_idx_i, sr_idx_j, sr_S = neighbor_list('ijS', atoms, self.sr_cutoff)
+                sr_offsets = np.dot(sr_S, atoms.get_cell())
             feed_dict = {self.Z: atoms.get_atomic_numbers(), self.R: atoms.get_positions(), 
                     self.idx_i: idx_i, self.idx_j: idx_j, self.offsets: offsets,
                     self.sr_idx_i: sr_idx_i, self.sr_idx_j: sr_idx_j, self.sr_offsets: sr_offsets}
@@ -122,7 +131,8 @@ class NNCalculator:
 
         #calculate energy and forces (in case multiple NNs are used as ensemble, this forms the average)
         if(type(self.checkpoint) is not list): #only one NN
-            self._last_energy, self._last_forces, self._last_charges = self.sess.run([self.energy, self.forces, self.charges], feed_dict=feed_dict)
+            self._last_energy, self._last_forces, self._last_stress, self._last_charges = self.sess.run([self.energy, self.forces, self.stress, self.charges], feed_dict=feed_dict)
+            self._last_stress = self._last_stress / atoms.cell.volume
             self._energy_stdev = 0
         else: #ensemble is used
             for i in range(len(self.checkpoint)):
@@ -145,6 +155,16 @@ class NNCalculator:
             if(len(self.checkpoint) > 1):
                 self._energy_stdev = np.sqrt(self.energy_stdev/len(self.checkpoint))
 
+        #virial = np.zeros(6)
+        #dr = atoms.positions[idx_j] - atoms.positions[idx_i] + S.dot(atoms.cell)
+        #if len(idx_i) > 0:
+        #        virial = 0.5*np.array([dr[:,0]*forces[:,0],               # xx
+        #                               dr[:,1]*forces[:,1],               # yy
+        #                               dr[:,2]*forces[:,2],               # zz
+        #                               dr[:,1]*forces[:,2],               # yz
+        #                               dr[:,0]*forces[:,2],               # xz
+        #                               dr[:,0]*forces[:,1]]).sum(axis=1)  # xy
+
         self._last_energy = np.array(1*[self.last_energy]) #prevents some problems...
 
         #store copy of atoms
@@ -165,6 +185,16 @@ class NNCalculator:
             self._calculate_all_properties(atoms)
         return self.last_charges
 
+    def get_dipole_moment(self, atoms):
+        if self.calculation_required(atoms):
+            self._calculate_all_properties(atoms)
+        return self.last_charges.dot(atoms.get_positions())
+
+    def get_stress(self, atoms):
+        if self.calculation_required(atoms):
+            self._calculate_all_properties(atoms)
+        return self.last_stress
+
     @property
     def sess(self):
         return self._sess
@@ -174,12 +204,20 @@ class NNCalculator:
         return self._last_atoms
 
     @property
+    def atoms(self):
+        return self._last_atoms
+
+    @property
     def last_energy(self):
         return self._last_energy
 
     @property
     def last_forces(self):
         return self._last_forces
+
+    @property
+    def last_stress(self):
+        return self._last_stress
 
     @property
     def last_charges(self):
@@ -252,6 +290,10 @@ class NNCalculator:
     @property
     def forces(self):
         return self._forces
+
+    @property
+    def stress(self):
+        return self._stress
 
     @property
     def charges(self):

@@ -1,4 +1,4 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from .layers.RBFLayer import *
 from .layers.InteractionBlock import *
 from .layers.OutputBlock      import *
@@ -110,6 +110,15 @@ class NeuralNetwork:
         Dij = tf.sqrt(tf.nn.relu(tf.reduce_sum((Ri-Rj)**2, -1))) #relu prevents negative numbers in sqrt
         return Dij
 
+    #def calculate_interatomic_vectors(self, R, idx_i, idx_j, offsets=None):
+    #    #calculate interatomic distances
+    #    Ri = tf.gather(R, idx_i)
+    #    Rj = tf.gather(R, idx_j)
+    #    if offsets is not None:
+    #        Rj += offsets
+    #    Dij_vec = tf.convert_to_tensor(Ri-Rj)
+    #    return Dij_vec
+
     #calculates the atomic energies, charges and distances (needed if unscaled charges are wanted e.g. for loss function)
     def atomic_properties(self, Z, R, idx_i, idx_j, offsets=None, sr_idx_i=None, sr_idx_j=None, sr_offsets=None):
         with tf.name_scope("atomic_properties"):
@@ -122,6 +131,11 @@ class NeuralNetwork:
                 sr_idx_i = idx_i
                 sr_idx_j = idx_j
                 Dij_sr = Dij_lr
+            #may need Dij as vectors if virial is being calculated
+            #if True:
+            #    Dij_vec = self.calculate_interatomic_vectors(R, idx_i, idx_j, offsets=offsets)
+            #else:
+            #    Dij_vec = None
 
             #calculate radial basis function expansion
             rbf = self.rbf_layer(Dij_sr)
@@ -169,7 +183,9 @@ class NeuralNetwork:
         with tf.name_scope("energy_and_forces_from_atomic_properties"):
             energy = self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, batch_seg)
             forces = -tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), R)[0])
-        return energy, forces
+            virial = -0.5*tf.tensordot(forces,R,axes=[[0],[0]])
+            #virial2 = -0.5*tf.tensordot(tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), Dij_vec, unconnected_gradients='zero')[0]),Dij_vec,axes=[[0],[0]])
+        return energy, forces, virial
 
     #calculates the energy given the atomic properties (in order to prevent recomputation if atomic properties are calculated)
     def energy_from_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, Q_tot=None, batch_seg=None):

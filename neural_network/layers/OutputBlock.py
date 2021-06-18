@@ -1,4 +1,4 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from .NeuronLayer   import *
 from .DenseLayer    import *
 from .ResidualLayer import *
