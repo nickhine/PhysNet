@@ -132,7 +132,8 @@ class NNCalculator:
         #calculate energy and forces (in case multiple NNs are used as ensemble, this forms the average)
         if(type(self.checkpoint) is not list): #only one NN
             self._last_energy, self._last_forces, self._last_stress, self._last_charges = self.sess.run([self.energy, self.forces, self.stress, self.charges], feed_dict=feed_dict)
-            self._last_stress = self._last_stress / atoms.cell.volume
+            if not (atoms.cell==0).all():
+                self._last_stress = self._last_stress / atoms.cell.volume
             self._energy_stdev = 0
         else: #ensemble is used
             for i in range(len(self.checkpoint)):
