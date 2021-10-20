@@ -1,5 +1,8 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # or any {'0', '1', '2'}
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 import numpy as np
 import ase
@@ -92,6 +95,7 @@ class NNCalculator:
             self.nn.restore(self.sess, self.checkpoint)
 
         #calculate properties once to initialize everything
+        self.results = {}
         self._calculate_all_properties(atoms)
 
     def calculation_required(self, atoms, quantities=None):

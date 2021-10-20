@@ -457,4 +457,9 @@ with tf.Session() as sess:
             if (args.record_run_metadata > 0):
                 summary_writer.add_run_metadata(run_metadata, 'step %d' % step, global_step=step)
             if data.E is not None:
-                print(str(step)+'/'+str(args.max_steps), "loss:", results["loss_train"], "best:", best_loss, "emae:", results["energy_mae_train"], "best:", best_emae,flush=True)
+                print(str(step)+'/'+str(args.max_steps), "loss:", results["loss_train"], "best:", best_loss,
+                                                         "emae:", results["energy_mae_train"], "best:", best_emae,
+                                                         "fmae:", results["forces_mae_train"], "best:", best_fmae,
+                                                         "qmae:", results["charge_mae_train"], "best:", best_qmae,
+                                                         "dmae:", results["dipole_mae_train"], "best:", best_dmae,
+                                                         flush=True)
