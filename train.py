@@ -125,7 +125,8 @@ nn = NeuralNetwork(F=args.num_features,
                    Escale=data_provider.EperA_stdev,   
                    activation_fn=shifted_softplus, 
                    seed=None,
-                   scope="neural_network")
+                   scope="neural_network",
+                   dtype=tf.float32)
 
 logging.info("prepare training...")
 #generate data queues for efficient training
@@ -457,9 +458,8 @@ with tf.Session() as sess:
             if (args.record_run_metadata > 0):
                 summary_writer.add_run_metadata(run_metadata, 'step %d' % step, global_step=step)
             if data.E is not None:
-                print(str(step)+'/'+str(args.max_steps), "loss:", results["loss_train"], "best:", best_loss,
-                                                         "emae:", results["energy_mae_train"], "best:", best_emae,
-                                                         "fmae:", results["forces_mae_train"], "best:", best_fmae,
-                                                         "qmae:", results["charge_mae_train"], "best:", best_qmae,
-                                                         "dmae:", results["dipole_mae_train"], "best:", best_dmae,
-                                                         flush=True)
+                print(str(step)+'/'+str(args.max_steps), f"loss:{results['loss_train']:12.8f} best: {best_loss:12.8f}",
+                        f"emae:{results['energy_mae_train']:12.8f} best: {best_emae:12.8f}",
+                        f"fmae:{results['forces_mae_train']:12.8f} best: {best_fmae:12.8f}",
+                        f"qmae:{results['charge_mae_train']:12.8f} best: {best_qmae:12.8f}",
+                        f"dmae:{results['dipole_mae_train']:12.8f} best: {best_dmae:12.8f}",flush=True)
