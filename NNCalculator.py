@@ -33,8 +33,8 @@ class NNCalculator:
                  a1=None,                        #a1 coefficient for d3 dispersion, by default is learned
                  a2=None,                        #a2 coefficient for d3 dispersion, by default is learned   
                  activation_fn=shifted_softplus, #activation function
-                 dtype=tf.float32):              #single or double precision
-
+                 dtype=tf.float32,               #single or double precision
+                 sess_in=None):              
         #create neighborlist
         if lr_cut is None:
             self._sr_cutoff = sr_cut
@@ -87,9 +87,12 @@ class NNCalculator:
         self._energy, self._forces, self._stress = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
 
         #create TensorFlow session and load neural network(s)
-        self._sess = tf.Session()
-        if(type(self.checkpoint) is not list):
-            self.nn.restore(self.sess, self.checkpoint)
+        if sess_in is None:
+            self._sess = tf.Session()
+            if(type(self.checkpoint) is not list):
+                self.nn.restore(self.sess, self.checkpoint)
+        else:
+            self._sess = sess_in
 
         #calculate properties once to initialize everything
         self._calculate_all_properties(atoms)
