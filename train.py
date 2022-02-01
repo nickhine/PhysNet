@@ -254,7 +254,7 @@ summary_writer = tf.summary.FileWriter(logdir=log_dir, graph=tf.get_default_grap
 
 #create saver
 with tf.name_scope("saver"):
-    saver = tf.train.Saver(max_to_keep=50)
+    saver = tf.train.Saver(max_to_keep=10)
 
 #save/load best recorded loss (only the best model is saved)
 if os.path.isfile(best_loss_file):

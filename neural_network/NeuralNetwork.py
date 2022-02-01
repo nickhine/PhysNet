@@ -183,9 +183,10 @@ class NeuralNetwork:
         with tf.name_scope("energy_and_forces_from_atomic_properties"):
             energy = self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, batch_seg)
             forces = -tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), R)[0])
-            virial = -0.5*tf.tensordot(forces,R,axes=[[0],[0]])
+            #virial = -0.5*tf.tensordot(forces,R,axes=[[0],[0]])
             #virial2 = -0.5*tf.tensordot(tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), Dij_vec, unconnected_gradients='zero')[0]),Dij_vec,axes=[[0],[0]])
-        return energy, forces, virial
+            #virial = None
+        return energy, forces #, virial
 
     #calculates the energy given the atomic properties (in order to prevent recomputation if atomic properties are calculated)
     def energy_from_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, Q_tot=None, batch_seg=None):

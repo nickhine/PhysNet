@@ -87,7 +87,8 @@ class NNCalculator:
         else:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets)
         self._charges = self.nn.scaled_charges(self.Z, Qa, self.Q_tot)
-        self._energy, self._forces, self._stress = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
+        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
+        #self._stress
 
         #create TensorFlow session and load neural network(s)
         if sess_in is None:
@@ -138,9 +139,10 @@ class NNCalculator:
 
         #calculate energy and forces (in case multiple NNs are used as ensemble, this forms the average)
         if(type(self.checkpoint) is not list): #only one NN
-            self._last_energy, self._last_forces, self._last_stress, self._last_charges = self.sess.run([self.energy, self.forces, self.stress, self.charges], feed_dict=feed_dict)
-            if not (atoms.cell==0).all():
-                self._last_stress = self._last_stress / atoms.cell.volume
+            #self._last_energy, self._last_forces, self._last_stress, self._last_charges = self.sess.run([self.energy, self.forces, self.stress, self.charges], feed_dict=feed_dict)
+            self._last_energy, self._last_forces, self._last_charges = self.sess.run([self.energy, self.forces, self.charges], feed_dict=feed_dict)
+            #if not (atoms.cell==0).all():
+            #    self._last_stress = self._last_stress / atoms.cell.volume
             self._energy_stdev = 0
         else: #ensemble is used
             for i in range(len(self.checkpoint)):
@@ -198,10 +200,10 @@ class NNCalculator:
             self._calculate_all_properties(atoms)
         return self.last_charges.dot(atoms.get_positions())
 
-    def get_stress(self, atoms):
-        if self.calculation_required(atoms):
-            self._calculate_all_properties(atoms)
-        return self.last_stress
+    #def get_stress(self, atoms):
+    #    if self.calculation_required(atoms):
+    #        self._calculate_all_properties(atoms)
+    #    return self.last_stress
 
     @property
     def sess(self):
@@ -223,9 +225,9 @@ class NNCalculator:
     def last_forces(self):
         return self._last_forces
 
-    @property
-    def last_stress(self):
-        return self._last_stress
+    #@property
+    #def last_stress(self):
+    #    return self._last_stress
 
     @property
     def last_charges(self):
@@ -299,9 +301,9 @@ class NNCalculator:
     def forces(self):
         return self._forces
 
-    @property
-    def stress(self):
-        return self._stress
+    #@property
+    #def stress(self):
+    #    return self._stress
 
     @property
     def charges(self):
