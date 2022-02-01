@@ -1,8 +1,11 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # or any {'0', '1', '2'}
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # or any {'0', '1', '2'}
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+tf.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+#import warnings
+#warnings.filterwarnings('Converting sparse')
 
 import numpy as np
 import ase
@@ -37,7 +40,9 @@ class NNCalculator:
                  a2=None,                        #a2 coefficient for d3 dispersion, by default is learned   
                  activation_fn=shifted_softplus, #activation function
                  dtype=tf.float32,               #single or double precision
-                 sess_in=None):              
+                 nn_in=None,
+                 sess_in=None): 
+
         #create neighborlist
         if lr_cut is None:
             self._sr_cutoff = sr_cut
@@ -53,7 +58,10 @@ class NNCalculator:
         self._checkpoint = checkpoint
 
         #create neural network
-        self._nn = NeuralNetwork(F=F,
+        if nn_in is not None:
+            self._nn = nn_in
+        else:
+            self._nn = NeuralNetwork(F=F,
                                  K=K,
                                  sr_cut=sr_cut,
                                  lr_cut=lr_cut,
