@@ -30,11 +30,13 @@ class NNCalculator:
                  num_residual_interaction=3,     #number of residual layers for refinement of message vector
                  num_residual_output=1,          #number of residual layers for the output blocks
                  use_electrostatic=True,         #adds electrostatic contributions to atomic energy
+                 use_ewald=False,                #calculates electrostatic interaction
                  use_dispersion=True,            #adds dispersion contributions to atomic energy
                  s6=None,                        #s6 coefficient for d3 dispersion, by default is learned
                  s8=None,                        #s8 coefficient for d3 dispersion, by default is learned
                  a1=None,                        #a1 coefficient for d3 dispersion, by default is learned
                  a2=None,                        #a2 coefficient for d3 dispersion, by default is learned   
+                 ewald_alpha=None,               #Ewald alpha parameter for periodic electrostatics
                  activation_fn=shifted_softplus, #activation function
                  dtype=tf.float32,               #single or double precision
                  sess_in=None):              
@@ -47,6 +49,8 @@ class NNCalculator:
             self._sr_cutoff = sr_cut
             self._lr_cutoff = lr_cut
             self._use_neighborlist = True
+        print(f'use_ewald = {use_ewald}')
+        self._use_ewald = use_ewald
 
 
         #save checkpoint
@@ -62,11 +66,13 @@ class NNCalculator:
                                  num_residual_interaction=num_residual_interaction,     
                                  num_residual_output=num_residual_output,          
                                  use_electrostatic=use_electrostatic,         
+                                 use_ewald=use_ewald,
                                  use_dispersion=use_dispersion,      
                                  s6=s6,
                                  s8=s8,
                                  a1=a1,
-                                 a2=a2,      
+                                 a2=a2,
+                                 ewald_alpha=ewald_alpha,     
                                  activation_fn=activation_fn, 
                                  dtype=dtype, scope="neural_network")
 
@@ -80,6 +86,7 @@ class NNCalculator:
         self._sr_idx_i   = tf.placeholder(tf.int32, shape=[None, ], name="sr_idx_i") 
         self._sr_idx_j   = tf.placeholder(tf.int32, shape=[None, ], name="sr_idx_j") 
         self._sr_offsets = tf.placeholder(dtype,    shape=[None,3], name="sr_offsets") 
+        self._cell       = tf.placeholder(dtype,    shape=[   3,3], name="cell")
         
         #calculate atomic charges, energy and force evaluation nodes
         if self.use_neighborlist:
@@ -87,8 +94,7 @@ class NNCalculator:
         else:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets)
         self._charges = self.nn.scaled_charges(self.Z, Qa, self.Q_tot)
-        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j)
-        #self._stress
+        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j, self.cell)
 
         #create TensorFlow session and load neural network(s)
         if sess_in is None:
@@ -121,6 +127,8 @@ class NNCalculator:
             feed_dict = {self.Z: atoms.get_atomic_numbers(), self.R: atoms.get_positions(), 
                     self.idx_i: idx_i, self.idx_j: idx_j, self.offsets: offsets,
                     self.sr_idx_i: sr_idx_i, self.sr_idx_j: sr_idx_j, self.sr_offsets: sr_offsets}
+            if self.use_ewald:
+                feed_dict[self.cell] = atoms.get_cell().array
         else:
             N = len(atoms)
             idx_i = np.zeros([N*(N-1)], dtype=int)
@@ -139,10 +147,7 @@ class NNCalculator:
 
         #calculate energy and forces (in case multiple NNs are used as ensemble, this forms the average)
         if(type(self.checkpoint) is not list): #only one NN
-            #self._last_energy, self._last_forces, self._last_stress, self._last_charges = self.sess.run([self.energy, self.forces, self.stress, self.charges], feed_dict=feed_dict)
             self._last_energy, self._last_forces, self._last_charges = self.sess.run([self.energy, self.forces, self.charges], feed_dict=feed_dict)
-            #if not (atoms.cell==0).all():
-            #    self._last_stress = self._last_stress / atoms.cell.volume
             self._energy_stdev = 0
         else: #ensemble is used
             for i in range(len(self.checkpoint)):
@@ -250,6 +255,10 @@ class NNCalculator:
         return self._use_neighborlist
 
     @property
+    def use_ewald(self):
+        return self._use_ewald
+
+    @property
     def nn(self):
         return self._nn
 
@@ -292,6 +301,10 @@ class NNCalculator:
     @property
     def sr_idx_j(self):
         return self._sr_idx_j
+
+    @property
+    def cell(self):
+        return self._cell
 
     @property
     def energy(self):

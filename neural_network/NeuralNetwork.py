@@ -23,6 +23,7 @@ class NeuralNetwork:
                  num_residual_interaction=2,     #number of residual layers for refinement of message vector
                  num_residual_output=1,          #number of residual layers for the output blocks
                  use_electrostatic=True,         #adds electrostatic contributions to atomic energy
+                 use_ewald=False,                #periodic ewald interaction
                  use_dispersion=True,            #adds dispersion contributions to atomic energy
                  s6=None,                        #s6 coefficient for d3 dispersion, by default is learned
                  s8=None,                        #s8 coefficient for d3 dispersion, by default is learned
@@ -33,6 +34,7 @@ class NeuralNetwork:
                  Qshift=0.0,                     #initial value for output charge shift 
                  Qscale=1.0,                     #initial value for output charge scale 
                  kehalf=7.199822675975274,       #half (else double counting) of the Coulomb constant (default is in units e=1, eV=1, A=1)
+                 ewald_alpha=None,               #ewald alpha parameter for range-separation in periodic electrostatics
                  activation_fn=shifted_softplus, #activation function
                  dtype=tf.float32,               #single or double precision
                  seed=None,
@@ -46,6 +48,11 @@ class NeuralNetwork:
         self._sr_cut = sr_cut #cutoff for neural network interactions
         self._lr_cut = lr_cut #cutoff for long-range interactions
         self._use_electrostatic = use_electrostatic
+        self._use_ewald = use_ewald
+        print(f'use_ewald in NeuralNetwork {use_ewald}')
+        if use_ewald:
+            print(f'ewald_alpha in NeuralNetwork {ewald_alpha}')
+            self._ewald_alpha = ewald_alpha
         self._use_dispersion = use_dispersion
         self._activation_fn = activation_fn
         self._scope = scope
@@ -164,13 +171,13 @@ class NeuralNetwork:
         return Ea, Qa, Dij_lr, nhloss
 
     #calculates the energy given the scaled atomic properties (in order to prevent recomputation if atomic properties are calculated)
-    def energy_from_scaled_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, batch_seg=None):
+    def energy_from_scaled_atomic_properties(self, Ea, Qa, Dij, Z, R, idx_i, idx_j, cell=None, batch_seg=None):
         with tf.name_scope("energy_from_atomic_properties"):
             if batch_seg is None:
                 batch_seg = tf.zeros_like(Z)
             #add electrostatic and dispersion contribution to atomic energy
             if self.use_electrostatic:
-                Ea += self.electrostatic_energy_per_atom(Dij, Qa, idx_i, idx_j)
+                Ea += self.electrostatic_energy_per_atom(Dij, Qa, R, idx_i, idx_j, cell)
             if self.use_dispersion:
                 if self.lr_cut is not None:   
                     Ea += d3_autoev*edisp(Z, Dij/d3_autoang, idx_i, idx_j, s6=self.s6, s8=self.s8, a1=self.a1, a2=self.a2, cutoff=self.lr_cut/d3_autoang)
@@ -179,9 +186,9 @@ class NeuralNetwork:
         return tf.squeeze(tf.segment_sum(Ea, batch_seg))
 
     #calculates the energy and forces given the scaled atomic atomic properties (in order to prevent recomputation if atomic properties are calculated)
-    def energy_and_forces_from_scaled_atomic_properties(self, Ea, Qa, Dij, Z, R, idx_i, idx_j, batch_seg=None):
+    def energy_and_forces_from_scaled_atomic_properties(self, Ea, Qa, Dij, Z, R, idx_i, idx_j, cell, batch_seg=None):
         with tf.name_scope("energy_and_forces_from_atomic_properties"):
-            energy = self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, batch_seg)
+            energy = self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, R, idx_i, idx_j, cell, batch_seg)
             forces = -tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), R)[0])
             #virial = -0.5*tf.tensordot(forces,R,axes=[[0],[0]])
             #virial2 = -0.5*tf.tensordot(tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), Dij_vec, unconnected_gradients='zero')[0]),Dij_vec,axes=[[0],[0]])
@@ -189,30 +196,30 @@ class NeuralNetwork:
         return energy, forces #, virial
 
     #calculates the energy given the atomic properties (in order to prevent recomputation if atomic properties are calculated)
-    def energy_from_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, Q_tot=None, batch_seg=None):
+    def energy_from_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, cell, Q_tot=None, batch_seg=None):
         with tf.name_scope("energy_from_atomic_properties"):
             if batch_seg is None:
                 batch_seg = tf.zeros_like(Z)
             #scale charges such that they have the desired total charge
             Qa = self.scaled_charges(Z, Qa, Q_tot, batch_seg)
-        return self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, batch_seg)
+        return self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, R, idx_i, idx_j, cell, batch_seg)
 
     #calculates the energy and force given the atomic properties (in order to prevent recomputation if atomic properties are calculated)
-    def energy_and_forces_from_atomic_properties(self, Ea, Qa, Dij, Z, R, idx_i, idx_j, Q_tot=None, batch_seg=None):
+    def energy_and_forces_from_atomic_properties(self, Ea, Qa, Dij, Z, R, idx_i, idx_j, cell, Q_tot=None, batch_seg=None):
         with tf.name_scope("energy_and_forces_from_atomic_properties"):
-            energy = self.energy_from_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, Q_tot, batch_seg)
+            energy = self.energy_from_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, cell, Q_tot, batch_seg)
             forces = -tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), R)[0])
         return energy, forces
 
     #calculates the total energy (including electrostatic interactions)
-    def energy(self, Z, R, idx_i, idx_j, Q_tot=None, batch_seg=None, offsets=None, sr_idx_i=None, sr_idx_j=None, sr_offsets=None):
+    def energy(self, Z, R, idx_i, idx_j, cell, Q_tot=None, batch_seg=None, offsets=None, sr_idx_i=None, sr_idx_j=None, sr_offsets=None):
         with tf.name_scope("energy"):
             Ea, Qa, Dij, _ = self.atomic_properties(Z, R, idx_i, idx_j, offsets, sr_idx_i, sr_idx_j, sr_offsets)
-            energy = self.energy_from_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, Q_tot, batch_seg)
+            energy = self.energy_from_atomic_properties(Ea, Qa, Dij, Z, idx_i, idx_j, cell, Q_tot, batch_seg)
         return energy 
 
     #calculates the total energy and forces (including electrostatic interactions)
-    def energy_and_forces(self, Z, R, idx_i, idx_j, Q_tot=None, batch_seg=None, offsets=None, sr_idx_i=None, sr_idx_j=None, sr_offsets=None):
+    def energy_and_forces(self, Z, R, idx_i, idx_j, cell, Q_tot=None, batch_seg=None, offsets=None, sr_idx_i=None, sr_idx_j=None, sr_offsets=None):
         with tf.name_scope("energy_and_forces"):
             Ea, Qa, Dij, _ = self.atomic_properties(Z, R, idx_i, idx_j, offsets, sr_idx_i, sr_idx_j, sr_offsets)
             energy, forces = self.energy_and_forces_from_atomic_properties(Ea, Qa, Dij, Z, R, idx_i, idx_j, Q_tot, batch_seg)
@@ -241,12 +248,12 @@ class NeuralNetwork:
 
     #calculates the electrostatic energy per atom 
     #for very small distances, the 1/r law is shielded to avoid singularities
-    def electrostatic_energy_per_atom(self, Dij, Qa, idx_i, idx_j):
+    def electrostatic_energy_per_atom(self, Dij, Qa, R, idx_i, idx_j, cell):
         #gather charges
         Qi = tf.gather(Qa, idx_i)
         Qj = tf.gather(Qa, idx_j)
         #calculate variants of Dij which we need to calculate
-        #the various shileded/non-shielded potentials
+        #the various shielded/non-shielded potentials
         DijS = tf.sqrt(Dij*Dij + 1.0) #shielded distance
         #calculate value of switching function
         switch = self._switch(Dij) #normal switch
@@ -260,12 +267,22 @@ class NeuralNetwork:
         else: #with non-bonded cutoff
             cut   = self.lr_cut
             cut2  = self.lr_cut*self.lr_cut
-            Eele_ordinary = 1.0/Dij  +  Dij/cut2 - 2.0/cut
-            Eele_shielded = 1.0/DijS + DijS/cut2 - 2.0/cut
+            if not self.use_ewald:
+                Eele_ordinary = 1.0/Dij  +  Dij/cut2 - 2.0/cut
+                Eele_shielded = 1.0/DijS + DijS/cut2 - 2.0/cut
+            else:
+                #Eele_recip = self.ewald_recip(R,cell)
+                Eele_ordinary = tf.math.erfc(self.ewald_alpha*Dij)/Dij #+ Eele_recip
+                Eele_shielded = tf.math.erfc(self.ewald_alpha*Dij)/DijS #+ Eele_recip
             #combine shielded and ordinary interactions and apply prefactors 
             Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
             Eele = tf.where(Dij <= cut, Eele, tf.zeros_like(Eele))
         return tf.segment_sum(Eele, idx_i) 
+
+    def ewald_recip(self,R,cell):
+         e_recip = 
+         e_self = 
+         return e_recip + e_self
 
     #save the current model
     def save(self, sess, save_path, global_step=None):
@@ -342,6 +359,10 @@ class NeuralNetwork:
         return self._use_electrostatic
 
     @property
+    def use_ewald(self):
+        return self._use_ewald
+
+    @property
     def use_dispersion(self):
         return self._use_dispersion
 
@@ -364,7 +385,11 @@ class NeuralNetwork:
     @property
     def lr_cut(self):
         return self._lr_cut
-    
+
+    @property
+    def ewald_alpha(self):
+        return self._ewald_alpha
+ 
     @property
     def activation_fn(self):
         return self._activation_fn
