@@ -271,18 +271,89 @@ class NeuralNetwork:
                 Eele_ordinary = 1.0/Dij  +  Dij/cut2 - 2.0/cut
                 Eele_shielded = 1.0/DijS + DijS/cut2 - 2.0/cut
             else:
-                #Eele_recip = self.ewald_recip(R,cell)
-                Eele_ordinary = tf.math.erfc(self.ewald_alpha*Dij)/Dij #+ Eele_recip
-                Eele_shielded = tf.math.erfc(self.ewald_alpha*Dij)/DijS #+ Eele_recip
+                Eele_ordinary = tf.math.erfc(self.ewald_alpha*Dij)/Dij 
+                Eele_shielded = tf.math.erfc(self.ewald_alpha*Dij)/DijS 
             #combine shielded and ordinary interactions and apply prefactors 
             Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
             Eele = tf.where(Dij <= cut, Eele, tf.zeros_like(Eele))
+            if self.use_ewald:
+                Eele_recip = Eele + self.ewald_recip(Qi,R,cell)
         return tf.segment_sum(Eele, idx_i) 
 
-    def ewald_recip(self,R,cell):
-         e_recip = 
-         e_self = 
-         return e_recip + e_self
+    # Adapted from PyTorch code in SpookyNet by O. Unke. Unfinished.
+    def ewald_recip(self,q,R,cell,eps=1e-8):
+         # e_recip = (1/2V)sum_k 4pi/k^2 sum_J Q_i Q_j exp(-i k.rIJ) exp (-k^2/ (4 alpha))
+         # calculate k-space vectors
+         box_length = tf.linalg.diag(cell)
+         print(box_length)
+         k = self.get_kvecs(20,20,20,cell)
+         print('k=',k)
+         # gaussian charge density
+         k2 = tf.reduce_sum(k * k, -1)  # squared length of k-vectors
+         qg = tf.math.exp(-0.25 * k2 / (self.alpha*self.alpha)) / k2
+         print('qg=',qg)
+         # fourier charge density
+         dot = tf.reduce_sum(tf.expand_dims(k,0) * tf.expand_dims(R,-2),-1) 
+         print('R=',R,'\n\n',tf.expand_dims(k,0) ,tf.expand_dims(R,-2),'\ndot=',dot)
+         q_real = tf.expand_dims(q,-1) * tf.math.cos(dot)
+         q_imag = tf.expand_dims(q,-1) * tf.math.sin(dot)
+         print('q_real=',q_real)
+         qf = q_real ** 2 + q_imag ** 2
+         print('qf=',qf)
+         qf_sum = tf.reduce_sum(qf*qg,-1)
+         print('qf_sum',qf_sum)
+         two_pi_over_V = tf.reduce_sum(tf.cross(cell[0],cell[1])*cell[2],-1) / (self.two_pi**2)
+         # reciprocal energy
+         e_reciprocal = two_pi_over_V * qf_sum
+         # self interaction correction
+         q2 = q * q
+         e_self = self.alpha * self.one_over_sqrtpi * q2
+         print('e_self=',e_self)
+         # spread reciprocal energy over atoms (to get an atomic contributions)
+         w = q2 + eps  # epsilon is added to prevent division by zero
+         wnorm = tf.reduce_sum(w,-1)
+         print('wnorm=',wnorm)
+         w = w / wnorm
+         e_reciprocal = w * e_reciprocal
+         print('e_reciprocal=',e_reciprocal)
+         return self.kehalf*(e_reciprocal + e_self)
+
+    def get_kvecs(self, Nxmax: int, Nymax: int, Nzmax: int, cell) -> None:
+        """ Set integer reciprocal space cutoff for Ewald summation """
+        import math
+        kx = tf.range(0, Nxmax + 1, 1, self.dtype)
+        kx = tf.concat([kx, -kx[1:]],axis=0)
+        ky = tf.range(0, Nymax + 1, 1, self.dtype)
+        ky = tf.concat([ky, -ky[1:]],axis=0)
+        kz = tf.range(0, Nzmax + 1, 1, self.dtype)
+        kz = tf.concat([kz, -kz[1:]],axis=0)
+        kvs = tf.stack(tf.meshgrid(kx, ky, kz, indexing='ij'), axis=-1)
+        kvf = tf.reshape(kvs, (-1, 3))[1:]
+        kmax = max(max(Nxmax, Nymax), Nzmax)
+        print('kvf=',kvf)
+        k = tf.math.scalar_mul(2.0*math.pi, tf.linalg.matvec(cell,kvf))
+        kvi = tf.reduce_sum(tf.where(tf.math.reduce_sum(k**2,-1)<=kmax**2),-1)
+        kvecs = tf.gather(k,kvi)
+        print('k=',k,'\nkvec=',kvecs,'\nkvi=',kvi)
+        return kvecs
+
+    def set_alpha(self, alpha=None, kmax=None):
+        import math
+        """ Set real space damping parameter for Ewald summation """
+        if alpha is None:  # automatically determine alpha
+            alpha = 4.0 / self.lr_cut + 1e-3
+        self.alpha = alpha
+        self.alpha2 = alpha ** 2
+        self.two_pi = 2.0 * math.pi
+        self.one_over_sqrtpi = 1 / math.sqrt(math.pi)
+        # print a warning if alpha is so small that the reciprocal space sum
+        # might "leak" into the damped part of the real space coulomb interaction
+        if alpha * self.lr_cut < 4.0:  # erfc(4.0) ~ 1e-8
+            print(f"Warning: Damping parameter alpha is {alpha} but probably should be at least {4.0 / self.lr_cut}")
+        if kmax is None:
+            self.kmax = 30
+        else:
+            self.kmax = kmax
 
     #save the current model
     def save(self, sess, save_path, global_step=None):
@@ -389,6 +460,10 @@ class NeuralNetwork:
     @property
     def ewald_alpha(self):
         return self._ewald_alpha
+
+    @property
+    def ewald_kmax(self):
+        return self._ewald_kmax
  
     @property
     def activation_fn(self):

@@ -89,6 +89,8 @@ class NNCalculator:
         self._cell       = tf.placeholder(dtype,    shape=[   3,3], name="cell")
         
         #calculate atomic charges, energy and force evaluation nodes
+        if self.use_ewald:
+            self.nn.set_alpha(ewald_alpha)
         if self.use_neighborlist:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets, self.sr_idx_i, self.sr_idx_j, self.sr_offsets)
         else:
@@ -128,7 +130,7 @@ class NNCalculator:
                     self.idx_i: idx_i, self.idx_j: idx_j, self.offsets: offsets,
                     self.sr_idx_i: sr_idx_i, self.sr_idx_j: sr_idx_j, self.sr_offsets: sr_offsets}
             if self.use_ewald:
-                feed_dict[self.cell] = atoms.get_cell().array
+                feed_dict[self.cell] = atoms.get_cell().reciprocal().array
         else:
             N = len(atoms)
             idx_i = np.zeros([N*(N-1)], dtype=int)
