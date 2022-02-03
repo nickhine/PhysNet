@@ -274,10 +274,11 @@ class NeuralNetwork:
                 Eele_ordinary = tf.math.erfc(self.ewald_alpha*Dij)/Dij 
                 Eele_shielded = tf.math.erfc(self.ewald_alpha*Dij)/DijS 
             #combine shielded and ordinary interactions and apply prefactors 
-            Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
+            #Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
+            Eele = self.kehalf*Qi*Qj*Eele_ordinary
             Eele = tf.where(Dij <= cut, Eele, tf.zeros_like(Eele))
             if self.use_ewald:
-                Eele_recip = Eele + self.ewald_recip(Qi,R,cell)
+                Eele = Eele + self.ewald_recip(Qi,R,cell)[0] + self.ewald_self(Qi)
         return tf.segment_sum(Eele, idx_i) 
 
     # Adapted from PyTorch code in SpookyNet by O. Unke. Unfinished.
@@ -286,7 +287,7 @@ class NeuralNetwork:
          # calculate k-space vectors
          box_length = tf.linalg.diag(cell)
          print(box_length)
-         k = self.get_kvecs(20,20,20,cell)
+         k = self.get_kvecs(40,40,40,cell)
          print('k=',k)
          # gaussian charge density
          k2 = tf.reduce_sum(k * k, -1)  # squared length of k-vectors
@@ -302,21 +303,24 @@ class NeuralNetwork:
          print('qf=',qf)
          qf_sum = tf.reduce_sum(qf*qg,-1)
          print('qf_sum',qf_sum)
-         two_pi_over_V = tf.reduce_sum(tf.cross(cell[0],cell[1])*cell[2],-1) / (self.two_pi**2)
+         two_pi_over_V = tf.reduce_sum(tf.cross(cell[0],cell[1])*cell[2],-1) * (self.two_pi)
          # reciprocal energy
          e_reciprocal = two_pi_over_V * qf_sum
-         # self interaction correction
-         q2 = q * q
-         e_self = self.alpha * self.one_over_sqrtpi * q2
-         print('e_self=',e_self)
          # spread reciprocal energy over atoms (to get an atomic contributions)
+         q2 = q * q
          w = q2 + eps  # epsilon is added to prevent division by zero
          wnorm = tf.reduce_sum(w,-1)
          print('wnorm=',wnorm)
          w = w / wnorm
          e_reciprocal = w * e_reciprocal
          print('e_reciprocal=',e_reciprocal)
-         return self.kehalf*(e_reciprocal + e_self)
+         return 2.0*self.kehalf*e_reciprocal,k,dot,qf,two_pi_over_V,w
+
+    def ewald_self(self,q):
+         # self interaction correction
+         q2 = q * q
+         e_self = - self.alpha * self.one_over_sqrtpi * q2
+         return 2.0*self.kehalf*e_self
 
     def get_kvecs(self, Nxmax: int, Nymax: int, Nzmax: int, cell) -> None:
         """ Set integer reciprocal space cutoff for Ewald summation """
@@ -332,7 +336,7 @@ class NeuralNetwork:
         kmax = max(max(Nxmax, Nymax), Nzmax)
         print('kvf=',kvf)
         k = tf.math.scalar_mul(2.0*math.pi, tf.linalg.matvec(cell,kvf))
-        kvi = tf.reduce_sum(tf.where(tf.math.reduce_sum(k**2,-1)<=kmax**2),-1)
+        kvi = tf.reduce_sum(tf.where(tf.math.reduce_sum(k**2,-1)<=self.kmax**2),-1)
         kvecs = tf.gather(k,kvi)
         print('k=',k,'\nkvec=',kvecs,'\nkvi=',kvi)
         return kvecs
@@ -351,7 +355,7 @@ class NeuralNetwork:
         if alpha * self.lr_cut < 4.0:  # erfc(4.0) ~ 1e-8
             print(f"Warning: Damping parameter alpha is {alpha} but probably should be at least {4.0 / self.lr_cut}")
         if kmax is None:
-            self.kmax = 30
+            self.kmax = 10
         else:
             self.kmax = kmax
 

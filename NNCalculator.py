@@ -86,7 +86,7 @@ class NNCalculator:
         self._sr_idx_i   = tf.placeholder(tf.int32, shape=[None, ], name="sr_idx_i") 
         self._sr_idx_j   = tf.placeholder(tf.int32, shape=[None, ], name="sr_idx_j") 
         self._sr_offsets = tf.placeholder(dtype,    shape=[None,3], name="sr_offsets") 
-        self._cell       = tf.placeholder(dtype,    shape=[   3,3], name="cell")
+        self._rcell       = tf.placeholder(dtype,    shape=[   3,3], name="rcell")
         
         #calculate atomic charges, energy and force evaluation nodes
         if self.use_ewald:
@@ -96,7 +96,7 @@ class NNCalculator:
         else:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets)
         self._charges = self.nn.scaled_charges(self.Z, Qa, self.Q_tot)
-        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j, self.cell)
+        self._energy, self._forces = self.nn.energy_and_forces_from_scaled_atomic_properties(Ea, self.charges, Dij, self.Z, self.R, self.idx_i, self.idx_j, self.rcell)
 
         #create TensorFlow session and load neural network(s)
         if sess_in is None:
@@ -130,7 +130,7 @@ class NNCalculator:
                     self.idx_i: idx_i, self.idx_j: idx_j, self.offsets: offsets,
                     self.sr_idx_i: sr_idx_i, self.sr_idx_j: sr_idx_j, self.sr_offsets: sr_offsets}
             if self.use_ewald:
-                feed_dict[self.cell] = atoms.get_cell().reciprocal().array
+                feed_dict[self.rcell] = atoms.get_cell().reciprocal().array
         else:
             N = len(atoms)
             idx_i = np.zeros([N*(N-1)], dtype=int)
@@ -305,8 +305,8 @@ class NNCalculator:
         return self._sr_idx_j
 
     @property
-    def cell(self):
-        return self._cell
+    def rcell(self):
+        return self._rcell
 
     @property
     def energy(self):
