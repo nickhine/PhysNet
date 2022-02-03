@@ -37,6 +37,8 @@ class NNCalculator:
                  a1=None,                        #a1 coefficient for d3 dispersion, by default is learned
                  a2=None,                        #a2 coefficient for d3 dispersion, by default is learned   
                  ewald_alpha=None,               #Ewald alpha parameter for periodic electrostatics
+                 ewald_kmax=None,                #Ewald recip latvec cutoff for periodic electrostatics
+                 ewald_Nmax=None,                #Ewald recip latvec max integers for periodic electrostatics
                  activation_fn=shifted_softplus, #activation function
                  dtype=tf.float32,               #single or double precision
                  sess_in=None):              
@@ -49,7 +51,6 @@ class NNCalculator:
             self._sr_cutoff = sr_cut
             self._lr_cutoff = lr_cut
             self._use_neighborlist = True
-        print(f'use_ewald = {use_ewald}')
         self._use_ewald = use_ewald
 
 
@@ -72,7 +73,6 @@ class NNCalculator:
                                  s8=s8,
                                  a1=a1,
                                  a2=a2,
-                                 ewald_alpha=ewald_alpha,     
                                  activation_fn=activation_fn, 
                                  dtype=dtype, scope="neural_network")
 
@@ -90,7 +90,7 @@ class NNCalculator:
         
         #calculate atomic charges, energy and force evaluation nodes
         if self.use_ewald:
-            self.nn.set_alpha(ewald_alpha)
+            self.nn.set_ewald_params(alpha=ewald_alpha,kmax=ewald_kmax,Nmax=ewald_Nmax)
         if self.use_neighborlist:
             Ea, Qa, Dij, nhloss = self.nn.atomic_properties(self.Z, self.R, self.idx_i, self.idx_j, self.offsets, self.sr_idx_i, self.sr_idx_j, self.sr_offsets)
         else:
