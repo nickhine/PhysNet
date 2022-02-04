@@ -344,7 +344,7 @@ class NeuralNetwork:
         else:
             self.ewald_kmax = kmax
         if Nmax is None:
-            self.ewald_Nmax = [20,20,20]
+            self.ewald_Nmax = [16,16,16]
         else:
             self.ewald_Nmax = Nmax
 

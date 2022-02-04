@@ -35,7 +35,8 @@ class NNCalculator:
                  s6=None,                        #s6 coefficient for d3 dispersion, by default is learned
                  s8=None,                        #s8 coefficient for d3 dispersion, by default is learned
                  a1=None,                        #a1 coefficient for d3 dispersion, by default is learned
-                 a2=None,                        #a2 coefficient for d3 dispersion, by default is learned   
+                 a2=None,                        #a2 coefficient for d3 dispersion, by default is learned
+                 skin=0.0,                       #Neighborlist skin
                  ewald_alpha=None,               #Ewald alpha parameter for periodic electrostatics
                  ewald_kmax=None,                #Ewald recip latvec cutoff for periodic electrostatics
                  ewald_Nmax=None,                #Ewald recip latvec max integers for periodic electrostatics
@@ -51,6 +52,10 @@ class NNCalculator:
             self._sr_cutoff = sr_cut
             self._lr_cutoff = lr_cut
             self._use_neighborlist = True
+            self.last_nl_atoms = ase.atoms.Atoms("")
+            self.skin = skin
+            self.skin2 = self.skin**2
+            assert self.skin >= 0.0
         self._use_ewald = use_ewald
 
 
@@ -113,22 +118,34 @@ class NNCalculator:
     def calculation_required(self, atoms, quantities=None):
         return atoms != self.last_atoms
 
+    def _periodic_neighborlist(self, atoms):
+        if (len(self.last_nl_atoms) != len(atoms) or (self.last_nl_atoms.pbc != atoms.pbc).any()
+              or (self.last_nl_atoms.cell != atoms.cell).any()
+              or ((self.last_nl_atoms.positions - atoms.positions) ** 2).sum(-1).max() > self.skin2):
+            self.last_nl_atoms = atoms.copy()
+            print('updating neighborlist',self.last_nl_atoms.calc)
+            self.last_nl_idx_i, self.last_nl_idx_j, S = neighbor_list('ijS', atoms, self.lr_cutoff+self.skin*2)
+            self.last_nl_offsets = np.dot(S, atoms.get_cell())
+            if self.lr_cutoff == self.sr_cutoff:
+                self.last_nl_sr_idx_i = self.last_nl_idx_i
+                self.last_nl_sr_idx_j = self.last_nl_idx_j
+                sr_S = S
+                self.last_nl_sr_offsets = self.last_nl_offsets
+            else:
+                self.last_nl_sr_idx_i, self.last_nl_sr_idx_j, sr_S = neighbor_list('ijS', atoms, self.sr_cutoff+self.skin*2)
+                self.last_sr_offsets = np.dot(sr_S, atoms.get_cell())
+
     def _calculate_all_properties(self, atoms):
         #find neighbors and offsets
         if self.use_neighborlist or any(atoms.get_pbc()):
-            idx_i, idx_j, S = neighbor_list('ijS', atoms, self.lr_cutoff)
-            offsets = np.dot(S, atoms.get_cell())
-            if self.lr_cutoff == self.sr_cutoff:
-                sr_idx_i = idx_i
-                sr_idx_j = idx_j
-                sr_S = S
-                sr_offsets = offsets
-            else:
-                sr_idx_i, sr_idx_j, sr_S = neighbor_list('ijS', atoms, self.sr_cutoff)
-                sr_offsets = np.dot(sr_S, atoms.get_cell())
+            self._periodic_neighborlist(atoms) 
             feed_dict = {self.Z: atoms.get_atomic_numbers(), self.R: atoms.get_positions(), 
-                    self.idx_i: idx_i, self.idx_j: idx_j, self.offsets: offsets,
-                    self.sr_idx_i: sr_idx_i, self.sr_idx_j: sr_idx_j, self.sr_offsets: sr_offsets}
+                    self.idx_i: self.last_nl_idx_i, 
+                    self.idx_j: self.last_nl_idx_j,
+                    self.offsets: self.last_nl_offsets,
+                    self.sr_idx_i: self.last_nl_sr_idx_i,
+                    self.sr_idx_j: self.last_nl_sr_idx_j,
+                    self.sr_offsets: self.last_nl_sr_offsets}
             if self.use_ewald:
                 feed_dict[self.rcell] = atoms.get_cell().reciprocal().array
         else:
@@ -172,16 +189,6 @@ class NNCalculator:
             if(len(self.checkpoint) > 1):
                 self._energy_stdev = np.sqrt(self.energy_stdev/len(self.checkpoint))
 
-        #virial = np.zeros(6)
-        #dr = atoms.positions[idx_j] - atoms.positions[idx_i] + S.dot(atoms.cell)
-        #if len(idx_i) > 0:
-        #        virial = 0.5*np.array([dr[:,0]*forces[:,0],               # xx
-        #                               dr[:,1]*forces[:,1],               # yy
-        #                               dr[:,2]*forces[:,2],               # zz
-        #                               dr[:,1]*forces[:,2],               # yz
-        #                               dr[:,0]*forces[:,2],               # xz
-        #                               dr[:,0]*forces[:,1]]).sum(axis=1)  # xy
-
         self._last_energy = np.array(1*[self.last_energy]) #prevents some problems...
 
         #store copy of atoms
@@ -207,11 +214,6 @@ class NNCalculator:
             self._calculate_all_properties(atoms)
         return self.last_charges.dot(atoms.get_positions())
 
-    #def get_stress(self, atoms):
-    #    if self.calculation_required(atoms):
-    #        self._calculate_all_properties(atoms)
-    #    return self.last_stress
-
     @property
     def sess(self):
         return self._sess
@@ -231,10 +233,6 @@ class NNCalculator:
     @property
     def last_forces(self):
         return self._last_forces
-
-    #@property
-    #def last_stress(self):
-    #    return self._last_stress
 
     @property
     def last_charges(self):
@@ -315,10 +313,6 @@ class NNCalculator:
     @property
     def forces(self):
         return self._forces
-
-    #@property
-    #def stress(self):
-    #    return self._stress
 
     @property
     def charges(self):
