@@ -185,10 +185,7 @@ class NeuralNetwork:
         with tf.name_scope("energy_and_forces_from_atomic_properties"):
             energy = self.energy_from_scaled_atomic_properties(Ea, Qa, Dij, Z, R, idx_i, idx_j, cell, batch_seg)
             forces = -tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), R)[0])
-            #virial = -0.5*tf.tensordot(forces,R,axes=[[0],[0]])
-            #virial2 = -0.5*tf.tensordot(tf.convert_to_tensor(tf.gradients(tf.reduce_sum(energy), Dij_vec, unconnected_gradients='zero')[0]),Dij_vec,axes=[[0],[0]])
-            #virial = None
-        return energy, forces #, virial
+        return energy, forces
 
     #calculates the energy given the atomic properties (in order to prevent recomputation if atomic properties are calculated)
     def energy_from_atomic_properties(self, Ea, Qa, Dij, Z, idx_i, idx_j, cell, Q_tot=None, batch_seg=None):
@@ -257,8 +254,11 @@ class NeuralNetwork:
         if self.lr_cut is None: #no non-bonded cutoff
             Eele_ordinary = 1.0/Dij   #ordinary electrostatic energy
             Eele_shielded = 1.0/DijS  #shielded electrostatic energy
-            #combine shielded and ordinary interactions and apply prefactors 
-            Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
+            #combine shielded and ordinary interactions and apply prefactors
+            if True:
+                Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
+            else:
+                Eele = self.kehalf*Qi*Qj*Eele_ordinary
             Eele_at = tf.segment_sum(Eele,idx_i)
         else: #with non-bonded cutoff
             cut   = self.lr_cut
@@ -266,14 +266,18 @@ class NeuralNetwork:
             if not self.use_ewald:
                 Eele_ordinary = 1.0/Dij  +  Dij/cut2 - 2.0/cut
                 Eele_shielded = 1.0/DijS + DijS/cut2 - 2.0/cut
-            else:
-                Eele_ordinary = tf.math.erfc(self.ewald_alpha*Dij)/Dij 
-                Eele_shielded = tf.math.erfc(self.ewald_alpha*Dij)/DijS 
-            #combine shielded and ordinary interactions and apply prefactors
-            if True: # Change to False to turn off shielding for testing purposes
+                #combine shielded and ordinary interactions and apply prefactors
                 Eele = self.kehalf*Qi*Qj*(cswitch*Eele_shielded + switch*Eele_ordinary)
             else:
-                Eele = self.kehalf*Qi*Qj*Eele_ordinary
+                Eele_ew_direct = tf.math.erfc(self.ewald_alpha*Dij)/Dij 
+                Eele_ordinary = 1.0/Dij
+                Eele_shielded = 1.0/DijS
+                #combine ewald real space term with shielded and ordinary 
+                #interactions and apply prefactors
+                if True: # if True, apply shielded coulomb interaction
+                   Eele = self.kehalf*Qi*Qj*(cswitch*(Eele_shielded - Eele_ordinary) + Eele_ew_direct)
+                else:
+                   Eele = self.kehalf*Qi*Qj*Eele_ew_direct # just the full Ewald term, no shielding
             Eele = tf.where(Dij <= cut, Eele, tf.zeros_like(Eele))
             Eele_at = tf.segment_sum(Eele,idx_i)
             if self.use_ewald:
