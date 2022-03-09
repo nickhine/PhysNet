@@ -123,7 +123,6 @@ class NNCalculator:
               or (self.last_nl_atoms.cell != atoms.cell).any()
               or ((self.last_nl_atoms.positions - atoms.positions) ** 2).sum(-1).max() > self.skin2):
             self.last_nl_atoms = atoms.copy()
-            print('updating neighborlist',self.last_nl_atoms.calc)
             self.last_nl_idx_i, self.last_nl_idx_j, S = neighbor_list('ijS', atoms, self.lr_cutoff+self.skin*2)
             self.last_nl_offsets = np.dot(S, atoms.get_cell())
             if self.lr_cutoff == self.sr_cutoff:
